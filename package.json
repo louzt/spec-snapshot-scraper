@@ -1,0 +1,27 @@
+{
+  "name": "spec-snapshot-scraper",
+  "version": "0.1.0",
+  "description": "AI-friendly docs/spec snapshot scraper for websites, explicit URL lists, and public GitHub docs trees.",
+  "type": "module",
+  "bin": {
+    "spec-snapshot-scraper": "src/cli.mjs"
+  },
+  "scripts": {
+    "run:ircv3": "node src/cli.mjs run --config examples/ircv3-web.json",
+    "run:ircv3-github": "node src/cli.mjs run --config examples/ircv3-github-tree.json"
+  },
+  "keywords": [
+    "scraper",
+    "snapshot",
+    "llm",
+    "docs",
+    "spec",
+    "github",
+    "crawler"
+  ],
+  "author": "louzt",
+  "license": "MIT",
+  "dependencies": {
+    "jsdom": "^26.1.0"
+  }
+}

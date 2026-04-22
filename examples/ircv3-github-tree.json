@@ -1,0 +1,18 @@
+{
+  "outputDir": "./output/ircv3-github-tree",
+  "sources": [
+    {
+      "name": "ircv3-github-tree",
+      "type": "github-tree",
+      "owner": "ircv3",
+      "repo": "ircv3-specifications",
+      "ref": "master",
+      "includePathPatterns": [
+        "^(?:README\\.md|specs/.+\\.md|extensions/.+\\.md|registry.+\\.md)$"
+      ],
+      "excludePathPatterns": [
+        "^node_modules/"
+      ]
+    }
+  ]
+}

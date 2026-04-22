@@ -1,0 +1,13 @@
+{
+  "outputDir": "./output/raw-url-list",
+  "sources": [
+    {
+      "name": "raw-url-list",
+      "type": "url-list",
+      "urls": [
+        "https://ircv3.net/specs/extensions/message-tags",
+        "https://raw.githubusercontent.com/ircv3/ircv3-specifications/master/README.md"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "outputDir": "./output/ircv3-web",
+  "sources": [
+    {
+      "name": "ircv3-web",
+      "type": "web",
+      "rootUrl": "https://ircv3.net/",
+      "seedUrls": [
+        "https://ircv3.net/specs",
+        "https://ircv3.net/registry",
+        "https://ircv3.net/support-tables"
+      ],
+      "allowHosts": ["ircv3.net"],
+      "includeUrlPatterns": [
+        "^https://ircv3\\.net(?:/(?:specs(?:/.*)?|registry(?:/.*)?|support-tables(?:/.*)?|working-group|faq)?/?)?$"
+      ],
+      "excludeUrlPatterns": [
+        "^https://ircv3\\.net/rss/?$"
+      ],
+      "maxPages": 300
+    }
+  ]
+}
