@@ -211,6 +211,12 @@ The tool will:
 
 That gives you a reproducible audit trail for spec drift.
 
+## Ready-made configs
+
+- `examples/iroh-llms.json` — snapshots docs discovered from `https://docs.iroh.computer/llms.txt`
+- `examples/rust-stable-web.json` — crawls the stable Rust docs surface (`book`, `reference`, `rustdoc`, `cargo`, `std`) with a bounded page budget
+- `examples/docsrs-about.json` — snapshots the stable docs.rs about/build/metadata pages without touching arbitrary crate docs
+
 ## How metadata is stored for AI consumption
 
 Every stored page begins with a YAML-style metadata header, for example:
