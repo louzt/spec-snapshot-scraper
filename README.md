@@ -216,6 +216,7 @@ That gives you a reproducible audit trail for spec drift.
 - `examples/iroh-llms.json` — snapshots docs discovered from `https://docs.iroh.computer/llms.txt`
 - `examples/rust-stable-web.json` — crawls the stable Rust docs surface (`book`, `reference`, `rustdoc`, `cargo`, `std`) with a bounded page budget
 - `examples/docsrs-about.json` — snapshots the stable docs.rs about/build/metadata pages without touching arbitrary crate docs
+- `examples/quinn-docs.json` — snapshots the key Quinn docs.rs pages plus the Quinn guide for QUIC transport tuning work
 
 ## How metadata is stored for AI consumption
 

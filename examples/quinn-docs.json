@@ -1,0 +1,20 @@
+{
+  "outputDir": "../output/quinn-docs",
+  "sources": [
+    {
+      "name": "quinn-docs",
+      "type": "url-list",
+      "urls": [
+        "https://docs.rs/quinn/latest/quinn/",
+        "https://docs.rs/quinn/latest/quinn/struct.TransportConfig.html",
+        "https://docs.rs/quinn/latest/quinn/struct.Connection.html",
+        "https://docs.rs/quinn/latest/quinn/struct.Endpoint.html",
+        "https://docs.rs/quinn/latest/quinn/struct.MtuDiscoveryConfig.html",
+        "https://docs.rs/quinn/latest/quinn/struct.IdleTimeout.html",
+        "https://quinn-rs.github.io/quinn/",
+        "https://quinn-rs.github.io/quinn/quic.html",
+        "https://quinn-rs.github.io/quinn/getting-started.html"
+      ]
+    }
+  ]
+}
