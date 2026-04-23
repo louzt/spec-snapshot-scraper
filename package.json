@@ -7,8 +7,10 @@
     "spec-snapshot-scraper": "src/cli.mjs"
   },
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
     "run:ircv3": "node src/cli.mjs run --config examples/ircv3-web.json",
-    "run:ircv3-github": "node src/cli.mjs run --config examples/ircv3-github-tree.json"
+    "run:ircv3-github": "node src/cli.mjs run --config examples/ircv3-github-tree.json",
+    "run:iroh": "node src/cli.mjs run --config examples/iroh-llms.json"
   },
   "keywords": [
     "scraper",

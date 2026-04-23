@@ -1,0 +1,17 @@
+{
+  "outputDir": "../output/iroh-llms",
+  "sources": [
+    {
+      "name": "iroh-llms",
+      "type": "llms-txt",
+      "llmsUrl": "https://docs.iroh.computer/llms.txt",
+      "allowHosts": ["docs.iroh.computer"],
+      "includeUrlPatterns": [
+        "^https://docs\\.iroh\\.computer(?:/.*)?$"
+      ],
+      "excludeUrlPatterns": [
+        "^https://docs\\.iroh\\.computer/llms\\.txt$"
+      ]
+    }
+  ]
+}

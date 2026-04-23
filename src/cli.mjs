@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
 import { JSDOM } from "jsdom";
 
 const VERSION = "0.1.0";
@@ -32,7 +32,7 @@ const blockSelectors = [
 ].join(", ");
 
 function usage() {
-  return `spec-snapshot-scraper ${VERSION}\n\nUsage:\n  spec-snapshot-scraper run --config <path-to-json>\n\nConfig source types:\n  - web\n  - url-list\n  - github-tree\n`;
+  return `spec-snapshot-scraper ${VERSION}\n\nUsage:\n  spec-snapshot-scraper run --config <path-to-json>\n\nConfig source types:\n  - web\n  - url-list\n  - github-tree\n  - llms-txt\n`;
 }
 
 function parseArgs(argv) {
@@ -524,6 +524,74 @@ async function runUrlListSource(source) {
   return { pages, errors };
 }
 
+export function extractUrlsFromLlmsText(text, llmsUrl, source) {
+  const baseUrl = source.baseUrl || llmsUrl;
+  const includeRegexes = regexList(source.includeUrlPatterns);
+  const excludeRegexes = regexList(source.excludeUrlPatterns);
+  const allowHosts = source.allowHosts?.length
+    ? source.allowHosts
+    : [new URL(baseUrl).host];
+
+  const found = new Set();
+  const addUrl = (candidate) => {
+    try {
+      const parsed = new URL(candidate, baseUrl);
+      if (!allowHosts.includes(parsed.host)) return;
+      const normalized = parsed.toString().replace(/\/$/, (m, offset, full) => {
+        return new URL(full).pathname === "/" ? m : "";
+      });
+      if (!shouldKeepByPatterns(normalized, includeRegexes, excludeRegexes)) return;
+      found.add(normalized);
+    } catch {
+      return;
+    }
+  };
+
+  const markdownLinkMatches = text.matchAll(/\[[^\]]+\]\(([^)]+)\)/g);
+  for (const match of markdownLinkMatches) {
+    const raw = match[1].trim().replace(/[),.;:]+$/, "");
+    if (!raw || raw.startsWith("#")) continue;
+    addUrl(raw);
+  }
+
+  const urlMatches = text.matchAll(/https?:\/\/[^\s)>"]+/g);
+  for (const match of urlMatches) {
+    const raw = match[0].replace(/[),.;:]+$/, "");
+    addUrl(raw);
+  }
+
+  return [...found].sort((a, b) => a.localeCompare(b));
+}
+
+async function runLlmsTxtSource(source) {
+  if (!source.llmsUrl) {
+    throw new Error(`llms-txt source ${source.name} is missing llmsUrl`);
+  }
+
+  const llmsResponse = await fetchText(source.llmsUrl, {
+    userAgent: source.userAgent,
+    headers: source.headers,
+    timeoutMs: source.timeoutMs,
+  });
+
+  if (!llmsResponse.ok) {
+    throw new Error(`llms.txt fetch failed for ${source.llmsUrl}: HTTP ${llmsResponse.status}`);
+  }
+
+  const urls = extractUrlsFromLlmsText(
+    llmsResponse.text,
+    llmsResponse.url,
+    source,
+  );
+  const urlListSource = {
+    ...source,
+    type: "url-list",
+    urls,
+  };
+
+  return runUrlListSource(urlListSource);
+}
+
 function safeFileNameFromRepoPath(repoPath) {
   return ensureMarkdownExtension(path.join("pages", repoPath.split("/").map((segment) => sanitizeSegment(segment)).join("/")));
 }
@@ -608,6 +676,8 @@ async function runSource(source) {
       return runUrlListSource(source);
     case "github-tree":
       return runGitHubTreeSource(source);
+    case "llms-txt":
+      return runLlmsTxtSource(source);
     default:
       throw new Error(`Unsupported source type: ${source.type}`);
   }
@@ -672,7 +742,7 @@ async function loadConfig(configPath) {
   return { configPath: absolutePath, config };
 }
 
-async function run(configPath) {
+export async function run(configPath) {
   const { configPath: absoluteConfigPath, config } = await loadConfig(configPath);
   const configDir = path.dirname(absoluteConfigPath);
   const outputRoot = path.resolve(configDir, config.outputDir);
@@ -732,7 +802,7 @@ async function run(configPath) {
   process.stdout.write(`${JSON.stringify(runSummary, null, 2)}\n`);
 }
 
-async function main() {
+export async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.command === "help") {
     process.stdout.write(usage());
@@ -749,7 +819,14 @@ async function main() {
   await run(args.configPath);
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.stack || error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+const isDirectRun =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectRun) {
+  main().catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.stack || error.message : String(error)}\n`,
+    );
+    process.exitCode = 1;
+  });
+}

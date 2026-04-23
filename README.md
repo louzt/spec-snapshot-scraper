@@ -5,6 +5,7 @@ AI-friendly docs/spec snapshot scraper for:
 - normal websites (`web`)
 - explicit URL sets (`url-list`)
 - public GitHub documentation trees (`github-tree`)
+- documentation indexes exposed via `llms.txt` (`llms-txt`)
 
 It creates **versioned snapshots**, a **latest** mirror, **per-page metadata headers**, **URL inventories**, and **change summaries** so an agent can work against a reproducible local corpus instead of scraping ad hoc on every prompt.
 
@@ -39,6 +40,7 @@ This tool exists to fill that gap.
   - unchanged URLs
 - **Automatic folder organization** by source name
 - **Website crawling** with host restriction and include/exclude regex filters
+- **`llms.txt` index ingestion** for docs sites that publish one
 - **GitHub tree ingestion** for public repos using the GitHub tree API plus raw file fetches
 - **Explicit URL-list mode** for targeted snapshots
 - **URL inventory files** in both JSON and TXT formats
@@ -64,6 +66,8 @@ spec-snapshot-scraper run --config examples/ircv3-web.json
 ## Output layout
 
 Every run writes to the configured `outputDir`:
+
+> `outputDir` is resolved **relative to the config file location**, so example configs inside `examples/` can intentionally target `../output/...` in the repository root.
 
 ```text
 outputDir/
@@ -159,6 +163,31 @@ Example:
       "ref": "master",
       "includePathPatterns": [
         "^(?:README\\.md|specs/.+\\.md|extensions/.+\\.md|registry.+\\.md)$"
+      ]
+    }
+  ]
+}
+```
+
+### 4) `llms-txt`
+
+Use this when the upstream docs site publishes a machine-readable documentation index at `llms.txt`.
+
+This is ideal for projects like Iroh where the docs explicitly recommend discovering the full page set from that file first.
+
+Example:
+
+```json
+{
+  "outputDir": "./output/iroh-llms",
+  "sources": [
+    {
+      "name": "iroh-llms",
+      "type": "llms-txt",
+      "llmsUrl": "https://docs.iroh.computer/llms.txt",
+      "allowHosts": ["docs.iroh.computer"],
+      "includeUrlPatterns": [
+        "^https://docs\\.iroh\\.computer(?:/.*)?$"
       ]
     }
   ]
