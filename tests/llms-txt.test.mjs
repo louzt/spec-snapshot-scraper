@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractUrlsFromLlmsText } from "../src/cli.mjs";
+import { discoverPaperAssetUrls, extractUrlsFromLlmsText } from "../src/cli.mjs";
 
 test("extractUrlsFromLlmsText collects absolute urls from llms.txt", () => {
   const text = `
@@ -54,4 +54,34 @@ https://example.com/not-allowed
   });
 
   assert.deepEqual(urls, ["https://docs.iroh.computer/overview"]);
+});
+
+test("discoverPaperAssetUrls converts arxiv abstract links to pdf assets", () => {
+  const text = `
+[Chimera Time-Crystalline order](https://arxiv.org/abs/2103.00104)
+[Direct PDF](https://ru.iis.sociales.unam.mx/bitstream/IIS/5684/2/sociosemiotica_y_cultura.pdf)
+`;
+
+  const urls = discoverPaperAssetUrls(text, "https://example.com/list", {
+    allowPaperHosts: ["arxiv.org", "ru.iis.sociales.unam.mx"],
+  });
+
+  assert.deepEqual(urls, [
+    "https://arxiv.org/pdf/2103.00104",
+    "https://ru.iis.sociales.unam.mx/bitstream/IIS/5684/2/sociosemiotica_y_cultura.pdf",
+  ]);
+});
+
+test("discoverPaperAssetUrls supports explicit paper url patterns", () => {
+  const text = `
+https://example.org/papers/no-extension
+https://example.org/blog/not-a-paper
+`;
+
+  const urls = discoverPaperAssetUrls(text, "https://example.org", {
+    allowPaperHosts: ["example.org"],
+    paperUrlPatterns: ["/papers/"],
+  });
+
+  assert.deepEqual(urls, ["https://example.org/papers/no-extension"]);
 });

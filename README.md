@@ -44,6 +44,8 @@ This tool exists to fill that gap.
 - **GitHub tree ingestion** for public repos using the GitHub tree API plus raw file fetches
 - **Explicit URL-list mode** for targeted snapshots
 - **URL inventory files** in both JSON and TXT formats
+- **Binary paper assets** for direct PDF URLs and discovered arXiv/PDF links
+- **Asset manifests** with byte length, content type, canonical URL, and SHA-256 for idempotent verification
 
 ## Install
 
@@ -141,6 +143,28 @@ Use this when you want a small curated set of exact URLs.
 
 This is useful when you do not want the crawler to discover links.
 
+Direct PDF URLs are downloaded as binary assets under `assets/` and receive a companion Markdown stub under `pages/` so RAG pipelines can index metadata without corrupting the original file. Assets are idempotent across runs: when a previous manifest entry and local file still match by SHA-256, the scraper reuses the verified local bytes instead of refetching the paper. To discover linked papers from HTML or Markdown pages, enable `capturePaperAssets`:
+
+```json
+{
+  "outputDir": "./output/research-papers",
+  "sources": [
+    {
+      "name": "research-papers",
+      "type": "url-list",
+      "capturePaperAssets": true,
+      "allowPaperHosts": ["arxiv.org", "ru.iis.sociales.unam.mx"],
+      "urls": [
+        "https://arxiv.org/abs/2103.00104",
+        "https://ru.iis.sociales.unam.mx/bitstream/IIS/5684/2/sociosemiotica_y_cultura.pdf"
+      ]
+    }
+  ]
+}
+```
+
+arXiv abstract URLs such as `https://arxiv.org/abs/2103.00104` are normalized to their full PDF asset URL, `https://arxiv.org/pdf/2103.00104`.
+
 ### 3) `github-tree`
 
 Use this for public GitHub documentation repos.
@@ -148,6 +172,8 @@ Use this for public GitHub documentation repos.
 The tool fetches the public tree via GitHub's tree API and then downloads matching files from `raw.githubusercontent.com`.
 
 This is better than manually maintaining large raw URL lists when the upstream docs repo changes often.
+
+For paper-index repositories, `capturePaperAssets` can also be enabled on a `github-tree` source. The scraper will parse fetched Markdown, discover direct PDF links and arXiv abstract links, download the paper assets, and write `_assets.json` next to `_manifest.json`.
 
 Example:
 
