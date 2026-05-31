@@ -1,0 +1,25 @@
+{
+  "outputDir": "../output/rust-stable-web",
+  "sources": [
+    {
+      "name": "rust-stable-web",
+      "type": "web",
+      "rootUrl": "https://doc.rust-lang.org/stable/",
+      "seedUrls": [
+        "https://doc.rust-lang.org/stable/book/",
+        "https://doc.rust-lang.org/stable/reference/",
+        "https://doc.rust-lang.org/stable/rustdoc/",
+        "https://doc.rust-lang.org/stable/cargo/",
+        "https://doc.rust-lang.org/stable/std/"
+      ],
+      "allowHosts": ["doc.rust-lang.org"],
+      "includeUrlPatterns": [
+        "^https://doc\\.rust-lang\\.org/stable/(?:book(?:/.*)?|reference(?:/.*)?|rustdoc(?:/.*)?|cargo(?:/.*)?|std(?:/.*)?)$"
+      ],
+      "excludeUrlPatterns": [
+        "^https://doc\\.rust-lang\\.org/stable/std/(?:arch|primitive|keyword|core|alloc)(?:/.*)?$"
+      ],
+      "maxPages": 400
+    }
+  ]
+}

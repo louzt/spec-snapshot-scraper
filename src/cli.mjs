@@ -3,13 +3,13 @@
 import { createHash } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
 import { JSDOM } from "jsdom";
 
 const VERSION = "0.1.0";
 const DEFAULT_USER_AGENT = `spec-snapshot-scraper/${VERSION} (+https://github.com/louzt/spec-snapshot-scraper)`;
 const DEFAULT_TIMEOUT_MS = 30000;
-const DEFAULT_ACCEPT = "text/html, text/plain, text/markdown, application/xhtml+xml;q=0.9, */*;q=0.1";
+const DEFAULT_ACCEPT = "text/html, text/plain, text/markdown, application/pdf, application/xhtml+xml;q=0.9, */*;q=0.1";
 const DEFAULT_SKIPPABLE_ASSET_RE = /\.(css|js|mjs|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|eot|pdf|xml|zip|gz|mp4|mp3|webm)$/i;
 
 const blockSelectors = [
@@ -32,7 +32,7 @@ const blockSelectors = [
 ].join(", ");
 
 function usage() {
-  return `spec-snapshot-scraper ${VERSION}\n\nUsage:\n  spec-snapshot-scraper run --config <path-to-json>\n\nConfig source types:\n  - web\n  - url-list\n  - github-tree\n`;
+  return `spec-snapshot-scraper ${VERSION}\n\nUsage:\n  spec-snapshot-scraper run --config <path-to-json>\n\nConfig source types:\n  - web\n  - url-list\n  - github-tree\n  - llms-txt\n`;
 }
 
 function parseArgs(argv) {
@@ -85,6 +85,29 @@ function safeFileNameFromUrl(urlString) {
   const querySuffix = url.search ? `--${sanitizeSegment(url.search.slice(1))}` : "";
   const candidate = `${cleanPath}${querySuffix}`;
   return candidate.endsWith(".md") ? candidate : `${candidate}.md`;
+}
+
+function safeAssetFileNameFromUrl(urlString, contentType = "") {
+  const url = new URL(urlString);
+  const rawPath = url.pathname === "/" ? "asset" : url.pathname.replace(/^\//, "");
+  const cleanPath = rawPath
+    .split("/")
+    .map((segment) => sanitizeSegment(segment))
+    .join("/");
+  const querySuffix = url.search ? `--${sanitizeSegment(url.search.slice(1))}` : "";
+  let candidate = `${cleanPath}${querySuffix}`;
+
+  const isArxivPdf = url.host === "arxiv.org" && url.pathname.startsWith("/pdf/");
+  if (isArxivPdf && !candidate.toLowerCase().endsWith(".pdf")) {
+    candidate = `${candidate}.pdf`;
+  } else if (!path.posix.extname(candidate)) {
+    if (contentType.includes("application/pdf")) {
+      candidate = `${candidate}.pdf`;
+    } else {
+      candidate = `${candidate}.bin`;
+    }
+  }
+  return path.join("assets", candidate);
 }
 
 function deriveTitleFromUrl(urlString) {
@@ -150,6 +173,35 @@ async function fetchText(url, options = {}) {
       status: response.status,
       url: response.url,
       text,
+      contentType: response.headers.get("content-type") || "",
+      etag: response.headers.get("etag") || "",
+      lastModified: response.headers.get("last-modified") || "",
+    };
+  } finally {
+    timeout.done();
+  }
+}
+
+async function fetchBytes(url, options = {}) {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeout = withTimeout(options.signal, timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        accept: options.accept ?? DEFAULT_ACCEPT,
+        "user-agent": options.userAgent ?? DEFAULT_USER_AGENT,
+        ...(options.headers ?? {}),
+      },
+      signal: timeout.signal,
+    });
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return {
+      ok: response.ok,
+      status: response.status,
+      url: response.url,
+      bytes,
       contentType: response.headers.get("content-type") || "",
       etag: response.headers.get("etag") || "",
       lastModified: response.headers.get("last-modified") || "",
@@ -332,6 +384,71 @@ function textToStoredBody(text) {
   return text.endsWith("\n") ? text : `${text}\n`;
 }
 
+function candidateUrlsFromText(text, baseUrl) {
+  const found = new Set();
+  const addUrl = (candidate) => {
+    try {
+      const parsed = new URL(candidate, baseUrl);
+      if (!["http:", "https:"].includes(parsed.protocol)) return;
+      parsed.hash = "";
+      found.add(parsed.toString());
+    } catch {
+      return;
+    }
+  };
+
+  for (const match of text.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
+    const raw = match[1].trim().replace(/[),.;:]+$/, "");
+    if (raw && !raw.startsWith("#")) addUrl(raw);
+  }
+  for (const match of text.matchAll(/https?:\/\/[^\s)>"]+/g)) {
+    addUrl(match[0].replace(/[),.;:]+$/, ""));
+  }
+  return [...found].sort((a, b) => a.localeCompare(b));
+}
+
+function normalizePaperAssetUrl(urlString) {
+  const url = new URL(urlString);
+  if (url.host === "arxiv.org" && url.pathname.startsWith("/abs/")) {
+    url.pathname = url.pathname.replace(/^\/abs\//, "/pdf/");
+    url.search = "";
+  }
+  return url.toString();
+}
+
+function isDefaultPaperAssetUrl(urlString) {
+  const url = new URL(urlString);
+  return url.pathname.toLowerCase().endsWith(".pdf")
+    || (url.host === "arxiv.org" && (url.pathname.startsWith("/pdf/") || url.pathname.startsWith("/abs/")));
+}
+
+export function discoverPaperAssetUrls(text, baseUrl, source = {}) {
+  const includeRegexes = regexList(source.paperUrlPatterns ?? source.pdfUrlPatterns ?? []);
+  const excludeRegexes = regexList(source.excludePaperUrlPatterns ?? source.excludePdfUrlPatterns ?? []);
+  const allowHosts = source.allowPaperHosts ?? source.allowPdfHosts ?? [];
+  const found = new Set();
+
+  for (const candidate of candidateUrlsFromText(text, baseUrl)) {
+    let normalized;
+    try {
+      normalized = normalizePaperAssetUrl(candidate);
+      const parsed = new URL(normalized);
+      if (allowHosts.length > 0 && !allowHosts.includes(parsed.host)) continue;
+      if (excludeRegexes.length > 0 && matchesAny(normalized, excludeRegexes)) continue;
+      if (includeRegexes.length > 0) {
+        if (!matchesAny(normalized, includeRegexes)) continue;
+      } else if (!isDefaultPaperAssetUrl(candidate)) {
+        continue;
+      }
+      found.add(normalized);
+    } catch {
+      continue;
+    }
+  }
+
+  return [...found].sort((a, b) => a.localeCompare(b));
+}
+
 function buildPageDocument(page) {
   const meta = [
     "---",
@@ -348,6 +465,8 @@ function buildPageDocument(page) {
     `sha256: ${page.sha256}`,
     ...(page.etag ? [`etag: ${JSON.stringify(page.etag)}`] : []),
     ...(page.lastModified ? [`lastModified: ${JSON.stringify(page.lastModified)}`] : []),
+    ...(page.assetPath ? [`assetPath: ${JSON.stringify(page.assetPath)}`] : []),
+    ...(page.byteLength ? [`byteLength: ${page.byteLength}`] : []),
     ...(page.repoPath ? [`repoPath: ${JSON.stringify(page.repoPath)}`] : []),
     ...(page.githubRef ? [`githubRef: ${JSON.stringify(page.githubRef)}`] : []),
     "---",
@@ -376,6 +495,101 @@ async function writeDualFile(latestRoot, snapshotRoot, relativePath, contents) {
     await ensureDirFor(target);
     await writeFile(target, contents, "utf8");
   }
+}
+
+async function writeDualBinaryFile(latestRoot, snapshotRoot, relativePath, contents) {
+  const targets = [path.join(latestRoot, relativePath), path.join(snapshotRoot, relativePath)];
+  for (const target of targets) {
+    await ensureDirFor(target);
+    await writeFile(target, contents);
+  }
+}
+
+function buildAssetStubPage(source, asset) {
+  return {
+    sourceName: source.name,
+    sourceType: source.type,
+    sourceUrl: asset.sourceUrl,
+    canonicalUrl: asset.canonicalUrl,
+    title: asset.title,
+    fetchedAt: asset.fetchedAt,
+    contentType: asset.contentType,
+    status: asset.status,
+    sha256: asset.sha256,
+    etag: asset.etag,
+    lastModified: asset.lastModified,
+    outputPath: asset.outputPath.replace(/^assets\//, "pages/").replace(/\.[^.]+$/, ".md"),
+    assetPath: asset.outputPath,
+    byteLength: asset.byteLength,
+    body: textToStoredBody([
+      `# ${asset.title}`,
+      "",
+      `Binary research asset stored at: \`${asset.outputPath}\``,
+      "",
+      `- Source URL: ${asset.sourceUrl}`,
+      `- Canonical URL: ${asset.canonicalUrl}`,
+      `- Content type: ${asset.contentType || "unknown"}`,
+      `- Byte length: ${asset.byteLength}`,
+      `- SHA-256: ${asset.sha256}`,
+    ].join("\n")),
+  };
+}
+
+async function fetchPaperAssets(urls, source) {
+  const assets = [];
+  const errors = [];
+  const maxAssets = source.maxPaperAssets ?? source.maxPdfAssets ?? urls.length;
+  const uniqueUrls = [...new Set(urls)].slice(0, maxAssets);
+  const previousAssets = source.previousAssets ?? [];
+  const previousByUrl = new Map();
+
+  for (const asset of previousAssets) {
+    previousByUrl.set(asset.sourceUrl, asset);
+    previousByUrl.set(asset.canonicalUrl, asset);
+  }
+
+  for (const url of uniqueUrls) {
+    const previous = previousByUrl.get(url);
+    if (source.assetCacheRoot && previous?.outputPath && previous?.sha256) {
+      const cachedPath = path.join(source.assetCacheRoot, previous.outputPath);
+      const cachedBytes = await readFile(cachedPath).catch(() => null);
+      if (cachedBytes && sha256(cachedBytes) === previous.sha256) {
+        assets.push({ ...previous, bytes: cachedBytes });
+        continue;
+      }
+    }
+
+    const response = await fetchBytes(url, {
+      userAgent: source.userAgent,
+      headers: source.headers,
+      timeoutMs: source.timeoutMs,
+      accept: "application/pdf, application/octet-stream;q=0.8, */*;q=0.1",
+    }).catch((error) => ({ ok: false, status: 0, url, bytes: Buffer.alloc(0), contentType: "", etag: "", lastModified: "", error: String(error) }));
+
+    if (!response.ok) {
+      errors.push({ url, error: response.error || `HTTP ${response.status}` });
+      continue;
+    }
+
+    const contentType = response.contentType || "application/octet-stream";
+    const asset = {
+      sourceUrl: url,
+      canonicalUrl: response.url,
+      title: deriveTitleFromUrl(response.url),
+      fetchedAt: new Date().toISOString(),
+      contentType,
+      status: response.status,
+      sha256: sha256(response.bytes),
+      byteLength: response.bytes.length,
+      etag: response.etag,
+      lastModified: response.lastModified,
+      outputPath: safeAssetFileNameFromUrl(url, contentType),
+      bytes: response.bytes,
+    };
+    assets.push(asset);
+  }
+
+  return { assets, errors };
 }
 
 function computeChangeSet(previousManifest, currentPages) {
@@ -483,10 +697,16 @@ async function runWebSource(source) {
 
 async function runUrlListSource(source) {
   const pages = [];
+  const assetUrls = [];
   const errors = [];
   const urls = source.urls ?? [];
 
   for (const url of urls) {
+    if (isDefaultPaperAssetUrl(url)) {
+      assetUrls.push(normalizePaperAssetUrl(url));
+      continue;
+    }
+
     const response = await fetchText(url, {
       userAgent: source.userAgent,
       headers: source.headers,
@@ -503,6 +723,11 @@ async function runUrlListSource(source) {
     const rendered = isHtml
       ? htmlToMarkdownish(response.text, response.url, { ...source, rootUrl: new URL(response.url).origin, allowHosts: [new URL(response.url).host] })
       : { title: deriveTitleFromUrl(response.url), body: response.text, links: [] };
+
+    if (source.capturePaperAssets || source.capturePdfAssets) {
+      const discovered = discoverPaperAssetUrls(response.text, response.url, source);
+      assetUrls.push(...discovered);
+    }
 
     pages.push({
       sourceName: source.name,
@@ -521,7 +746,81 @@ async function runUrlListSource(source) {
     });
   }
 
-  return { pages, errors };
+  const assetResult = await fetchPaperAssets(assetUrls, source);
+  errors.push(...assetResult.errors);
+  for (const asset of assetResult.assets) {
+    pages.push(buildAssetStubPage(source, asset));
+  }
+
+  return { pages, assets: assetResult.assets, errors };
+}
+
+export function extractUrlsFromLlmsText(text, llmsUrl, source) {
+  const baseUrl = source.baseUrl || llmsUrl;
+  const includeRegexes = regexList(source.includeUrlPatterns);
+  const excludeRegexes = regexList(source.excludeUrlPatterns);
+  const allowHosts = source.allowHosts?.length
+    ? source.allowHosts
+    : [new URL(baseUrl).host];
+
+  const found = new Set();
+  const addUrl = (candidate) => {
+    try {
+      const parsed = new URL(candidate, baseUrl);
+      if (!allowHosts.includes(parsed.host)) return;
+      const normalized = parsed.toString().replace(/\/$/, (m, offset, full) => {
+        return new URL(full).pathname === "/" ? m : "";
+      });
+      if (!shouldKeepByPatterns(normalized, includeRegexes, excludeRegexes)) return;
+      found.add(normalized);
+    } catch {
+      return;
+    }
+  };
+
+  const markdownLinkMatches = text.matchAll(/\[[^\]]+\]\(([^)]+)\)/g);
+  for (const match of markdownLinkMatches) {
+    const raw = match[1].trim().replace(/[),.;:]+$/, "");
+    if (!raw || raw.startsWith("#")) continue;
+    addUrl(raw);
+  }
+
+  const urlMatches = text.matchAll(/https?:\/\/[^\s)>"]+/g);
+  for (const match of urlMatches) {
+    const raw = match[0].replace(/[),.;:]+$/, "");
+    addUrl(raw);
+  }
+
+  return [...found].sort((a, b) => a.localeCompare(b));
+}
+
+async function runLlmsTxtSource(source) {
+  if (!source.llmsUrl) {
+    throw new Error(`llms-txt source ${source.name} is missing llmsUrl`);
+  }
+
+  const llmsResponse = await fetchText(source.llmsUrl, {
+    userAgent: source.userAgent,
+    headers: source.headers,
+    timeoutMs: source.timeoutMs,
+  });
+
+  if (!llmsResponse.ok) {
+    throw new Error(`llms.txt fetch failed for ${source.llmsUrl}: HTTP ${llmsResponse.status}`);
+  }
+
+  const urls = extractUrlsFromLlmsText(
+    llmsResponse.text,
+    llmsResponse.url,
+    source,
+  );
+  const urlListSource = {
+    ...source,
+    type: "url-list",
+    urls,
+  };
+
+  return runUrlListSource(urlListSource);
 }
 
 function safeFileNameFromRepoPath(repoPath) {
@@ -551,6 +850,7 @@ async function runGitHubTreeSource(source) {
   const includeRegexes = regexList(source.includePathPatterns);
   const excludeRegexes = regexList(source.excludePathPatterns);
   const pages = [];
+  const assetUrls = [];
   const errors = [];
 
   const items = (tree.tree ?? []).filter((item) => item.type === "blob");
@@ -578,6 +878,11 @@ async function runGitHubTreeSource(source) {
       ? htmlToMarkdownish(response.text, rawUrl, { rootUrl: new URL(rawUrl).origin, allowHosts: [new URL(rawUrl).host] })
       : { title: item.path, body: response.text, links: [] };
 
+    if (source.capturePaperAssets || source.capturePdfAssets) {
+      const discovered = discoverPaperAssetUrls(response.text, rawUrl, source);
+      assetUrls.push(...discovered);
+    }
+
     pages.push({
       sourceName: source.name,
       sourceType: source.type,
@@ -597,7 +902,13 @@ async function runGitHubTreeSource(source) {
     });
   }
 
-  return { pages, errors };
+  const assetResult = await fetchPaperAssets(assetUrls, source);
+  errors.push(...assetResult.errors);
+  for (const asset of assetResult.assets) {
+    pages.push(buildAssetStubPage(source, asset));
+  }
+
+  return { pages, assets: assetResult.assets, errors };
 }
 
 async function runSource(source) {
@@ -608,12 +919,14 @@ async function runSource(source) {
       return runUrlListSource(source);
     case "github-tree":
       return runGitHubTreeSource(source);
+    case "llms-txt":
+      return runLlmsTxtSource(source);
     default:
       throw new Error(`Unsupported source type: ${source.type}`);
   }
 }
 
-async function writeSourceOutputs({ latestRoot, snapshotRoot, source, runStartedAt, pages, errors, previousManifest }) {
+async function writeSourceOutputs({ latestRoot, snapshotRoot, source, runStartedAt, pages, assets, errors, previousManifest }) {
   const sourceLatestRoot = path.join(latestRoot, source.name);
   const sourceSnapshotRoot = path.join(snapshotRoot, source.name);
   const changeSet = computeChangeSet(previousManifest, pages);
@@ -622,12 +935,17 @@ async function writeSourceOutputs({ latestRoot, snapshotRoot, source, runStarted
     await writeDualFile(sourceLatestRoot, sourceSnapshotRoot, page.outputPath, buildPageDocument(page));
   }
 
+  for (const asset of assets) {
+    await writeDualBinaryFile(sourceLatestRoot, sourceSnapshotRoot, asset.outputPath, asset.bytes);
+  }
+
   const manifest = {
     sourceName: source.name,
     sourceType: source.type,
     runStartedAt,
     completedAt: new Date().toISOString(),
     pageCount: pages.length,
+    assetCount: assets.length,
     pages: pages.map((page) => ({
       sourceUrl: page.sourceUrl,
       canonicalUrl: page.canonicalUrl,
@@ -640,13 +958,30 @@ async function writeSourceOutputs({ latestRoot, snapshotRoot, source, runStarted
       ...(page.repoPath ? { repoPath: page.repoPath } : {}),
       ...(page.githubRef ? { githubRef: page.githubRef } : {}),
     })),
+    assets: assets.map((asset) => ({
+      sourceUrl: asset.sourceUrl,
+      canonicalUrl: asset.canonicalUrl,
+      title: asset.title,
+      fetchedAt: asset.fetchedAt,
+      contentType: asset.contentType,
+      status: asset.status,
+      sha256: asset.sha256,
+      byteLength: asset.byteLength,
+      outputPath: asset.outputPath,
+      ...(asset.etag ? { etag: asset.etag } : {}),
+      ...(asset.lastModified ? { lastModified: asset.lastModified } : {}),
+    })),
     errors,
   };
 
-  const urls = pages.map((page) => ({ sourceUrl: page.sourceUrl, outputPath: page.outputPath, sha256: page.sha256 }));
+  const urls = [
+    ...pages.map((page) => ({ type: "page", sourceUrl: page.sourceUrl, outputPath: page.outputPath, sha256: page.sha256 })),
+    ...assets.map((asset) => ({ type: "asset", sourceUrl: asset.sourceUrl, outputPath: asset.outputPath, sha256: asset.sha256, byteLength: asset.byteLength })),
+  ];
 
   await writeDualFile(sourceLatestRoot, sourceSnapshotRoot, "_manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
   await writeDualFile(sourceLatestRoot, sourceSnapshotRoot, "_changes.json", `${JSON.stringify(changeSet, null, 2)}\n`);
+  await writeDualFile(sourceLatestRoot, sourceSnapshotRoot, "_assets.json", `${JSON.stringify(manifest.assets, null, 2)}\n`);
   await writeDualFile(sourceLatestRoot, sourceSnapshotRoot, "_urls.json", `${JSON.stringify(urls, null, 2)}\n`);
   await writeDualFile(sourceLatestRoot, sourceSnapshotRoot, "_urls.txt", `${urls.map((entry) => entry.sourceUrl).join("\n")}\n`);
 
@@ -654,6 +989,7 @@ async function writeSourceOutputs({ latestRoot, snapshotRoot, source, runStarted
     sourceName: source.name,
     sourceType: source.type,
     pageCount: pages.length,
+    assetCount: assets.length,
     errorCount: errors.length,
     changes: changeSet.counts,
   };
@@ -672,7 +1008,7 @@ async function loadConfig(configPath) {
   return { configPath: absolutePath, config };
 }
 
-async function run(configPath) {
+export async function run(configPath) {
   const { configPath: absoluteConfigPath, config } = await loadConfig(configPath);
   const configDir = path.dirname(absoluteConfigPath);
   const outputRoot = path.resolve(configDir, config.outputDir);
@@ -693,8 +1029,15 @@ async function run(configPath) {
   const sourceSummaries = [];
 
   for (const source of config.sources) {
-    const { pages, errors } = await runSource(source);
+    const previousManifest = previousManifests.get(source.name);
+    const runSourceConfig = {
+      ...source,
+      assetCacheRoot: path.join(latestRoot, source.name),
+      previousAssets: previousManifest?.assets ?? [],
+    };
+    const { pages, assets = [], errors } = await runSource(runSourceConfig);
     pages.sort((a, b) => a.sourceUrl.localeCompare(b.sourceUrl));
+    assets.sort((a, b) => a.sourceUrl.localeCompare(b.sourceUrl));
     errors.sort((a, b) => a.url.localeCompare(b.url));
 
     const summary = await writeSourceOutputs({
@@ -703,8 +1046,9 @@ async function run(configPath) {
       source,
       runStartedAt,
       pages,
+      assets,
       errors,
-      previousManifest: previousManifests.get(source.name),
+      previousManifest,
     });
     sourceSummaries.push(summary);
   }
@@ -732,7 +1076,7 @@ async function run(configPath) {
   process.stdout.write(`${JSON.stringify(runSummary, null, 2)}\n`);
 }
 
-async function main() {
+export async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.command === "help") {
     process.stdout.write(usage());
@@ -749,7 +1093,14 @@ async function main() {
   await run(args.configPath);
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.stack || error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+const isDirectRun =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectRun) {
+  main().catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.stack || error.message : String(error)}\n`,
+    );
+    process.exitCode = 1;
+  });
+}

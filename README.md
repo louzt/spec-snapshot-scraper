@@ -5,6 +5,7 @@ AI-friendly docs/spec snapshot scraper for:
 - normal websites (`web`)
 - explicit URL sets (`url-list`)
 - public GitHub documentation trees (`github-tree`)
+- documentation indexes exposed via `llms.txt` (`llms-txt`)
 
 It creates **versioned snapshots**, a **latest** mirror, **per-page metadata headers**, **URL inventories**, and **change summaries** so an agent can work against a reproducible local corpus instead of scraping ad hoc on every prompt.
 
@@ -39,9 +40,12 @@ This tool exists to fill that gap.
   - unchanged URLs
 - **Automatic folder organization** by source name
 - **Website crawling** with host restriction and include/exclude regex filters
+- **`llms.txt` index ingestion** for docs sites that publish one
 - **GitHub tree ingestion** for public repos using the GitHub tree API plus raw file fetches
 - **Explicit URL-list mode** for targeted snapshots
 - **URL inventory files** in both JSON and TXT formats
+- **Binary paper assets** for direct PDF URLs and discovered arXiv/PDF links
+- **Asset manifests** with byte length, content type, canonical URL, and SHA-256 for idempotent verification
 
 ## Install
 
@@ -64,6 +68,8 @@ spec-snapshot-scraper run --config examples/ircv3-web.json
 ## Output layout
 
 Every run writes to the configured `outputDir`:
+
+> `outputDir` is resolved **relative to the config file location**, so example configs inside `examples/` can intentionally target `../output/...` in the repository root.
 
 ```text
 outputDir/
@@ -137,6 +143,28 @@ Use this when you want a small curated set of exact URLs.
 
 This is useful when you do not want the crawler to discover links.
 
+Direct PDF URLs are downloaded as binary assets under `assets/` and receive a companion Markdown stub under `pages/` so RAG pipelines can index metadata without corrupting the original file. Assets are idempotent across runs: when a previous manifest entry and local file still match by SHA-256, the scraper reuses the verified local bytes instead of refetching the paper. To discover linked papers from HTML or Markdown pages, enable `capturePaperAssets`:
+
+```json
+{
+  "outputDir": "./output/research-papers",
+  "sources": [
+    {
+      "name": "research-papers",
+      "type": "url-list",
+      "capturePaperAssets": true,
+      "allowPaperHosts": ["arxiv.org", "ru.iis.sociales.unam.mx"],
+      "urls": [
+        "https://arxiv.org/abs/2103.00104",
+        "https://ru.iis.sociales.unam.mx/bitstream/IIS/5684/2/sociosemiotica_y_cultura.pdf"
+      ]
+    }
+  ]
+}
+```
+
+arXiv abstract URLs such as `https://arxiv.org/abs/2103.00104` are normalized to their full PDF asset URL, `https://arxiv.org/pdf/2103.00104`.
+
 ### 3) `github-tree`
 
 Use this for public GitHub documentation repos.
@@ -144,6 +172,8 @@ Use this for public GitHub documentation repos.
 The tool fetches the public tree via GitHub's tree API and then downloads matching files from `raw.githubusercontent.com`.
 
 This is better than manually maintaining large raw URL lists when the upstream docs repo changes often.
+
+For paper-index repositories, `capturePaperAssets` can also be enabled on a `github-tree` source. The scraper will parse fetched Markdown, discover direct PDF links and arXiv abstract links, download the paper assets, and write `_assets.json` next to `_manifest.json`.
 
 Example:
 
@@ -159,6 +189,31 @@ Example:
       "ref": "master",
       "includePathPatterns": [
         "^(?:README\\.md|specs/.+\\.md|extensions/.+\\.md|registry.+\\.md)$"
+      ]
+    }
+  ]
+}
+```
+
+### 4) `llms-txt`
+
+Use this when the upstream docs site publishes a machine-readable documentation index at `llms.txt`.
+
+This is ideal for projects like Iroh where the docs explicitly recommend discovering the full page set from that file first.
+
+Example:
+
+```json
+{
+  "outputDir": "./output/iroh-llms",
+  "sources": [
+    {
+      "name": "iroh-llms",
+      "type": "llms-txt",
+      "llmsUrl": "https://docs.iroh.computer/llms.txt",
+      "allowHosts": ["docs.iroh.computer"],
+      "includeUrlPatterns": [
+        "^https://docs\\.iroh\\.computer(?:/.*)?$"
       ]
     }
   ]
@@ -181,6 +236,13 @@ The tool will:
 - emit `_changes.json` with added/changed/removed/unchanged counts and URLs
 
 That gives you a reproducible audit trail for spec drift.
+
+## Ready-made configs
+
+- `examples/iroh-llms.json` — snapshots docs discovered from `https://docs.iroh.computer/llms.txt`
+- `examples/rust-stable-web.json` — crawls the stable Rust docs surface (`book`, `reference`, `rustdoc`, `cargo`, `std`) with a bounded page budget
+- `examples/docsrs-about.json` — snapshots the stable docs.rs about/build/metadata pages without touching arbitrary crate docs
+- `examples/quinn-docs.json` — snapshots the key Quinn docs.rs pages plus the Quinn guide for QUIC transport tuning work
 
 ## How metadata is stored for AI consumption
 

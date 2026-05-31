@@ -1,0 +1,22 @@
+{
+  "outputDir": "../output/docsrs-about",
+  "sources": [
+    {
+      "name": "docsrs-about",
+      "type": "url-list",
+      "urls": [
+        "https://docs.rs/about",
+        "https://docs.rs/about/badges",
+        "https://docs.rs/about/builds",
+        "https://docs.rs/about/metadata",
+        "https://docs.rs/about/redirections",
+        "https://docs.rs/about/download",
+        "https://docs.rs/about/rustdoc-json",
+        "https://docs.rs/about/releases",
+        "https://docs.rs/about/build-queue",
+        "https://docs.rs/about/shorthand-urls",
+        "https://docs.rs/about/privacy"
+      ]
+    }
+  ]
+}
